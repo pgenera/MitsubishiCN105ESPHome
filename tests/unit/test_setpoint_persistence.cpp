@@ -78,3 +78,75 @@ TEST(SetpointPersistenceTest, DualNotSupportedDoesNotRestore) {
     auto s = HeatPumpProtocol::saved_setpoint_state(CLIMATE_MODE_HEAT_COOL, 20.0f, 24.0f);
     EXPECT_FALSE(HeatPumpProtocol::restored_setpoint_state(true, true, s, /*dual=*/false).has_value());
 }
+
+// ── Per-mode setpoint persistence (COOL / HEAT / AUTO) ──
+
+using ModeSetpoints = HeatPumpProtocol::ModeSetpoints;
+static_assert(sizeof(ModeSetpoints) == 4, "Keep ModeSetpoints in a single 4-byte preference slot");
+
+TEST(ModeSetpointsTest, DefaultIsUnset) {
+    ModeSetpoints ms{};
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_COOL).has_value());
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_HEAT).has_value());
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_AUTO).has_value());
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_DRY).has_value());
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_OFF).has_value());
+}
+
+TEST(ModeSetpointsTest, StoresAndRetrievesPerModeSetpoints) {
+    ModeSetpoints ms{};
+    EXPECT_TRUE(ms.update_from_mode_str("ON", "HEAT", 19.5f));
+    EXPECT_TRUE(ms.update_from_mode_str("ON", "COOL", 24.0f));
+    EXPECT_TRUE(ms.update_from_mode_str("ON", "AUTO", 21.5f));
+
+    ASSERT_TRUE(ms.get(CLIMATE_MODE_HEAT).has_value());
+    ASSERT_TRUE(ms.get(CLIMATE_MODE_COOL).has_value());
+    ASSERT_TRUE(ms.get(CLIMATE_MODE_AUTO).has_value());
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_HEAT), 19.5f);
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_COOL), 24.0f);
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_AUTO), 21.5f);
+
+    // Unchanged value returns false (avoids redundant flash writes).
+    EXPECT_FALSE(ms.update_from_mode_str("ON", "HEAT", 19.5f));
+    EXPECT_TRUE(ms.update_from_mode_str("ON", "HEAT", 20.0f));
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_HEAT), 20.0f);
+}
+
+TEST(ModeSetpointsTest, IgnoresOffDryFanAndOutOfRange) {
+    ModeSetpoints ms{};
+    EXPECT_FALSE(ms.update_from_mode_str("OFF", "HEAT", 20.0f));
+    EXPECT_FALSE(ms.update_from_mode_str("ON", "DRY", 24.0f));
+    EXPECT_FALSE(ms.update_from_mode_str("ON", "FAN", 22.0f));
+    EXPECT_FALSE(ms.update_from_mode_str("ON", "COOL", NAN));
+    EXPECT_FALSE(ms.update_from_mode_str("ON", "COOL", 9.5f));
+    EXPECT_FALSE(ms.update_from_mode_str("ON", "COOL", 31.5f));
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_HEAT).has_value());
+    EXPECT_FALSE(ms.get(CLIMATE_MODE_COOL).has_value());
+}
+
+TEST(ModeSetpointsTest, SupportsEncodingBLowerBound) {
+    ModeSetpoints ms{};
+    EXPECT_TRUE(ms.update_from_mode_str("ON", "HEAT", 10.0f));
+    EXPECT_TRUE(ms.update_from_mode_str("ON", "COOL", 31.0f));
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_HEAT), 10.0f);
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_COOL), 31.0f);
+}
+
+TEST(ModeSetpointsTest, ValidatedRejectsBadVersionAndCorruptSlots) {
+    ModeSetpoints bad_ver{};
+    bad_ver.version = ModeSetpoints::kVersion + 1;
+    bad_ver.heat_steps = ModeSetpoints::encode(20.0f);
+    auto r1 = ModeSetpoints::validated(true, bad_ver);
+    EXPECT_FALSE(r1.get(CLIMATE_MODE_HEAT).has_value());
+
+    ModeSetpoints corrupt{};
+    corrupt.heat_steps = ModeSetpoints::encode(19.5f);
+    corrupt.cool_steps = 200;  // decodes to 110.0°C > kMaxTemp
+    auto r2 = ModeSetpoints::validated(true, corrupt);
+    ASSERT_TRUE(r2.get(CLIMATE_MODE_HEAT).has_value());
+    EXPECT_FLOAT_EQ(*r2.get(CLIMATE_MODE_HEAT), 19.5f);
+    EXPECT_FALSE(r2.get(CLIMATE_MODE_COOL).has_value());
+
+    auto r3 = ModeSetpoints::validated(false, corrupt);
+    EXPECT_FALSE(r3.get(CLIMATE_MODE_HEAT).has_value());
+}

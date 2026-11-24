@@ -30,6 +30,7 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     void apply_wanted_settings() override;
     void apply_wanted_run_states() override;
     void control_mode() override;
+    void apply_mode_setpoint() override;
     void control_fan() override;
     void reconcile_fan(heatpumpSettings& settings, bool update_current) override;
     void update_target_temperatures(float temperature) override;
@@ -57,6 +58,11 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     using SetpointState = HeatPumpProtocol::SetpointState;
     ESPPreferenceObject setpoint_pref_;
     bool setpoint_pref_ready_ = false;
+    using ModeSetpoints = HeatPumpProtocol::ModeSetpoints;
+    ESPPreferenceObject mode_setpoints_pref_;
+    bool mode_setpoints_pref_ready_ = false;
+    ModeSetpoints mode_setpoints_{};
+    void save_mode_setpoint_(const heatpumpSettings& settings);
     void handleDualSetpointBoth(float low, float high);
     void handleDualSetpointLowOnly(float low);
     void handleDualSetpointHighOnly(float high);

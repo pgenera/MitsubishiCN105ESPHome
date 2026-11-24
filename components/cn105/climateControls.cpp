@@ -89,10 +89,17 @@ bool CN105Climate::processModeChange(const esphome::climate::ClimateCall& call) 
     ESP_LOGD("control", "Mode change asked");
     this->mode = *call.get_mode();
     this->controlMode();
-    // Do NOT call controlTemperature() here unconditionally.
-    // A mode-only change (e.g. switching to DRY) should not emit a SET temperature
-    // packet. If the call also includes a temperature change, processTemperatureChange()
-    // will handle it. This prevents overwriting the user's last setpoint on mode changes.
+    // On a mode-only change (no explicit target temperature in this call), restore the
+    // last saved setpoint for COOL/HEAT/AUTO (akin to the Mitsubishi IR remote).
+    // Modes without a saved setpoint (e.g. DRY, FAN_ONLY, OFF, or first-time use) do not
+    // emit a SET temperature packet. If the call includes a temperature, processTemperatureChange()
+    // handles it instead.
+    const bool has_temp = call.get_target_temperature().has_value() ||
+                          call.get_target_temperature_low().has_value() ||
+                          call.get_target_temperature_high().has_value();
+    if (!has_temp) {
+        this->profile_->apply_mode_setpoint();
+    }
     return true;
 }
 

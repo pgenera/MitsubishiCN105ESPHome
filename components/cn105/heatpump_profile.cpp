@@ -321,7 +321,8 @@ void HeatPumpProfile::decode_hvac_options() {
 
 void HeatPumpProfile::apply_received_settings(heatpumpSettings& settings) {
 
-    if ((hp_.wantedSettings.mode == nullptr) && (hp_.wantedSettings.power == nullptr)) {        // to prevent overwriting a user demand
+    const bool mode_stable = (hp_.wantedSettings.mode == nullptr) && (hp_.wantedSettings.power == nullptr);
+    if (mode_stable) {        // to prevent overwriting a user demand
         this->reconcile_power_mode(settings, true);
     }
 
@@ -342,6 +343,9 @@ void HeatPumpProfile::apply_received_settings(heatpumpSettings& settings) {
     if (this->shouldApplyIncomingSetpoint(settings)) {
         this->update_target_temperatures(settings.temperature);
         hp_.currentSettings.temperature = settings.temperature;
+        if (mode_stable) {
+            this->save_mode_setpoint_(settings);
+        }
     }
 
     hp_.currentSettings.iSee = settings.iSee;
@@ -996,7 +1000,43 @@ void HeatPumpProfile::handleSingleTargetInAutoOrDry(float requested) {
     }
 }
 
+void HeatPumpProfile::apply_mode_setpoint() {
+    const auto saved = this->mode_setpoints_.get(hp_.mode);
+    if (!saved.has_value()) {
+        return;
+    }
+    ESP_LOGI("control", "Applying saved setpoint %.1f °C for mode %u", *saved, static_cast<unsigned>(hp_.mode));
+    this->update_target_temperatures(*saved);
+    this->control_temperature();
+}
+
+void HeatPumpProfile::save_mode_setpoint_(const heatpumpSettings& settings) {
+    if (!this->mode_setpoints_pref_ready_) {
+        return;
+    }
+    if (hp_.mode == climate::CLIMATE_MODE_HEAT_COOL) {
+        return;
+    }
+    if (this->mode_setpoints_.update_from_mode_str(settings.power, settings.mode, settings.temperature)) {
+        if (this->mode_setpoints_pref_.save(&this->mode_setpoints_)) {
+            ESP_LOGI("restore", "Saved %s setpoint: %.1f °C", settings.mode, settings.temperature);
+        }
+    }
+}
+
 void HeatPumpProfile::restore_setpoints() {
+    // Always restore per-mode setpoints (COOL / HEAT / AUTO) from flash/RTC.
+    this->mode_setpoints_pref_ = global_preferences->make_preference<ModeSetpoints>(
+        hp_.get_object_id_hash() ^ 0x4D535054UL);  // XOR 'MSPT'
+    this->mode_setpoints_pref_ready_ = true;
+    ModeSetpoints raw_modes{};
+    const bool loaded_modes = this->mode_setpoints_pref_.load(&raw_modes);
+    this->mode_setpoints_ = ModeSetpoints::validated(loaded_modes, raw_modes);
+    ESP_LOGI("restore", "Saved per-mode setpoints (°C): heat=%.1f cool=%.1f auto=%.1f",
+        this->mode_setpoints_.get(climate::CLIMATE_MODE_HEAT).value_or(-1.0f),
+        this->mode_setpoints_.get(climate::CLIMATE_MODE_COOL).value_or(-1.0f),
+        this->mode_setpoints_.get(climate::CLIMATE_MODE_AUTO).value_or(-1.0f));
+
     if (!hp_.restore_setpoints_) {
         return;
     }

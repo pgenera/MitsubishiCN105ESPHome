@@ -24,6 +24,66 @@ struct HeatPumpProtocol {
             std::isnan(state.target_low) || std::isnan(state.target_high) || !supports_dual) return std::nullopt;
         return state;
     }
+
+    // Per-mode setpoint persistence (COOL / HEAT / AUTO), akin to the Mitsubishi IR remote.
+    // Stored as 0.5°C steps from 10.0°C (covering both Encoding A 16..31°C and Encoding B
+    // 10..31°C) in a single 4-byte packed record (1 ESP8266 preference slot).
+    struct ModeSetpoints {
+        static constexpr uint8_t kVersion = 1;
+        static constexpr uint8_t kUnset = 0xFF;
+        static constexpr float kMinTemp = 10.0f;
+        static constexpr float kMaxTemp = 31.0f;
+        static constexpr float kStep = 0.5f;
+
+        uint8_t version = kVersion;
+        uint8_t cool_steps = kUnset;
+        uint8_t heat_steps = kUnset;
+        uint8_t auto_steps = kUnset;
+
+        static uint8_t encode(float temp) {
+            if (std::isnan(temp) || temp < kMinTemp || temp > kMaxTemp) return kUnset;
+            return static_cast<uint8_t>(std::lround((temp - kMinTemp) / kStep));
+        }
+
+        static std::optional<float> decode(uint8_t steps) {
+            if (steps == kUnset) return std::nullopt;
+            const float temp = kMinTemp + (steps * kStep);
+            if (temp < kMinTemp || temp > kMaxTemp) return std::nullopt;
+            return temp;
+        }
+
+        std::optional<float> get(climate::ClimateMode mode) const {
+            switch (mode) {
+                case climate::CLIMATE_MODE_COOL: return decode(cool_steps);
+                case climate::CLIMATE_MODE_HEAT: return decode(heat_steps);
+                case climate::CLIMATE_MODE_AUTO: return decode(auto_steps);
+                default: return std::nullopt;
+            }
+        }
+
+        bool update_from_mode_str(const char* power, const char* mode, float temp) {
+            if (power == nullptr || std::strcmp(power, "ON") != 0 || mode == nullptr) return false;
+            const uint8_t encoded = encode(temp);
+            if (encoded == kUnset) return false;
+            uint8_t* slot = nullptr;
+            if (std::strcmp(mode, "COOL") == 0) slot = &cool_steps;
+            else if (std::strcmp(mode, "HEAT") == 0) slot = &heat_steps;
+            else if (std::strcmp(mode, "AUTO") == 0) slot = &auto_steps;
+            else return false;
+            if (*slot == encoded) return false;
+            *slot = encoded;
+            return true;
+        }
+
+        static ModeSetpoints validated(bool loaded, const ModeSetpoints& raw) {
+            if (!loaded || raw.version != kVersion) return ModeSetpoints{};
+            ModeSetpoints out{};
+            out.cool_steps = decode(raw.cool_steps).has_value() ? raw.cool_steps : kUnset;
+            out.heat_steps = decode(raw.heat_steps).has_value() ? raw.heat_steps : kUnset;
+            out.auto_steps = decode(raw.auto_steps).has_value() ? raw.auto_steps : kUnset;
+            return out;
+        }
+    } __attribute__((packed));
     static float deadband_setting(float current, float low, float high) {
         if (current < low) return low;
         if (current > high) return high;

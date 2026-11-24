@@ -44,6 +44,7 @@ class Cn105ProtocolProfile {
     virtual void apply_wanted_settings() = 0;
     virtual void apply_wanted_run_states() {}
     virtual void control_mode() = 0;
+    virtual void apply_mode_setpoint() {}
     virtual void control_fan() = 0;
     virtual void reconcile_fan(heatpumpSettings& settings, bool update_current) = 0;
     virtual void update_target_temperatures(float temperature) {}
