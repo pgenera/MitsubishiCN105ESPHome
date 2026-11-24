@@ -60,6 +60,7 @@ class Cn105ProtocolProfile {
     virtual bool accepts_remote_temperature(float setting) { return allow_operation(ProfileFeature::REMOTE_TEMPERATURE); }
     virtual bool can_control_airflow() const { return false; }
     virtual void update_action() = 0;
+    virtual void evaluate_heat_cool() {}
     virtual void restore_setpoints() {}
     virtual void save_setpoints() {}
     virtual void sanitize_setpoints() {}

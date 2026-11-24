@@ -154,6 +154,31 @@ void CN105Climate::control(const esphome::climate::ClimateCall& call) {
 
 }
 
+void CN105Climate::applyHeatCoolAutoSwitchDelegate(const char* hw_mode, float setpoint) {
+    if (this->mode != climate::CLIMATE_MODE_HEAT_COOL) {
+        return;
+    }
+    if (this->wantedSettings.hasChanged || this->wantedSettings.hasBeenSent) {
+        return;
+    }
+    this->setModeSetting(hw_mode);
+    this->setPowerSetting("ON");
+    const float calc = this->calculateTemperatureSetting(setpoint);
+    this->wantedSettings.temperature = calc;
+    this->wantedSettings.last_user_temperature = calc;
+    this->wantedSettings.last_user_temperature_ms = CUSTOM_MILLIS;
+    this->finalizeControlIfUpdated(true);
+}
+
+void CN105Climate::applyHeatCoolAutoSwitch(const char* hw_mode, float setpoint) {
+#ifdef USE_ESP32
+    std::lock_guard<std::mutex> guard(wantedSettingsMutex);
+    this->applyHeatCoolAutoSwitchDelegate(hw_mode, setpoint);
+#else
+    this->emulateMutex("HEAT_COOL_AUTO_SWITCH", std::bind(&CN105Climate::applyHeatCoolAutoSwitchDelegate, this, hw_mode, setpoint));
+#endif
+}
+
 
 /**
  * @brief Controls the swing modes based on user selection.

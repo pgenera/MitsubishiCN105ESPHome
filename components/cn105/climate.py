@@ -163,6 +163,9 @@ CONF_REPORT_WHEN_IDLE = "report_when_idle"
 # Support explicite du DUAL setpoint via YAML
 CONF_DUAL_SETPOINT = "dual_setpoint"
 CONF_RESTORE_SETPOINTS = "restore_setpoints"
+CONF_HEAT_COOL_MODE_SWITCHING = "heat_cool_mode_switching"
+CONF_HEAT_COOL_HYSTERESIS = "heat_cool_hysteresis"
+CONF_HEAT_COOL_MIN_SWITCH_INTERVAL = "heat_cool_min_switch_interval"
 
 DEFAULT_CLIMATE_MODES = ["AUTO", "COOL", "HEAT", "DRY", "FAN_ONLY", "HEAT_COOL"]
 DEFAULT_FAN_MODES = ["AUTO", "MIDDLE", "QUIET", "LOW", "MEDIUM", "HIGH"]
@@ -515,6 +518,9 @@ def validate_lossnay_config(config):
     if supports.get(CONF_RESTORE_SETPOINTS, False):
         raise cv.Invalid("lossnay does not support setpoint restoration")
 
+    if supports.get(CONF_HEAT_COOL_MODE_SWITCHING, False):
+        raise cv.Invalid("lossnay does not support heat_cool mode switching")
+
     if CONF_SUPPORTS_HORIZONTAL_VANE_MODE in supports:
         raise cv.Invalid("lossnay does not support horizontal vane modes")
 
@@ -617,6 +623,15 @@ CONFIG_SCHEMA = (
                     ): cv.ensure_list(climate.validate_climate_swing_mode),
                     cv.Optional(CONF_DUAL_SETPOINT, default=False): cv.boolean,
                     cv.Optional(CONF_RESTORE_SETPOINTS, default=False): cv.boolean,
+                    cv.Optional(
+                        CONF_HEAT_COOL_MODE_SWITCHING, default=False
+                    ): cv.boolean,
+                    cv.Optional(CONF_HEAT_COOL_HYSTERESIS, default=0.5): cv.float_range(
+                        min=0.0, max=5.0
+                    ),
+                    cv.Optional(
+                        CONF_HEAT_COOL_MIN_SWITCH_INTERVAL, default="15min"
+                    ): cv.positive_time_period_milliseconds,
                     cv.Optional(CONF_SUPPORTS_HORIZONTAL_VANE_MODE): cv.ensure_list(
                         cv.string
                     ),
@@ -661,6 +676,10 @@ def validate_setpoint_numbers_config(config):
             "heat_cool_low_setpoint_number and heat_cool_high_setpoint_number "
             "require supports.dual_setpoint: true"
         )
+    if supports.get(CONF_HEAT_COOL_MODE_SWITCHING, False) and not supports.get(
+        CONF_DUAL_SETPOINT, False
+    ):
+        raise cv.Invalid("heat_cool_mode_switching requires supports.dual_setpoint: true")
     return config
 
 
@@ -744,6 +763,18 @@ def to_code(config):
         # Opt-in: persist per-mode setpoints (COOL/HEAT/AUTO) and the HEAT_COOL
         # band (mode + low/high) to flash and restore them on boot/mode change.
         cg.add(var.set_restore_setpoints(supports.get(CONF_RESTORE_SETPOINTS, False)))
+        cg.add(
+            var.set_heat_cool_mode_switching(
+                supports.get(CONF_HEAT_COOL_MODE_SWITCHING, False)
+            )
+        )
+        cg.add(var.set_heat_cool_hysteresis(supports.get(CONF_HEAT_COOL_HYSTERESIS, 0.5)))
+        min_switch_ms = (
+            int(supports[CONF_HEAT_COOL_MIN_SWITCH_INTERVAL].total_milliseconds)
+            if CONF_HEAT_COOL_MIN_SWITCH_INTERVAL in supports
+            else 900000
+        )
+        cg.add(var.set_heat_cool_min_switch_interval(min_switch_ms))
         # ESPHome's default behavior for modes like COOL/HEAT is to enable single-point target temperature.
         # We don't need to explicitly force single-point or clear the dual flag (it's off by default).
 

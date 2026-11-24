@@ -223,6 +223,7 @@ void CN105Climate::statusChanged(heatpumpStatus status) {
         this->debugStatus("received", status);
         this->debugStatus("current", currentStatus);
         cn105::CommonProtocol::apply_status(*this, status);
+        this->profile_->evaluate_heat_cool();
     } // else no change
 }
 

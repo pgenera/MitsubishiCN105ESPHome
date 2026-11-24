@@ -205,3 +205,70 @@ TEST(SetpointPersistenceTest, QuantizeAndHeatCoolBandEdits) {
     EXPECT_FLOAT_EQ(low, 21.0f);
     EXPECT_FLOAT_EQ(high, 21.0f);
 }
+
+// ── Software HEAT_COOL hardware mode switching state machine ──
+
+using HeatCoolAction = HeatPumpProtocol::HeatCoolAction;
+
+TEST(HeatCoolModeSwitchingTest, EntryFromOffOrAutoPicksAppropriateHardwareMode) {
+    // Below low -> HEAT @ low
+    auto d1 = HeatPumpProtocol::decide_heat_cool(18.0f, 19.5f, 25.0f, "AUTO", 0.5f, 1000, 0, false, 900000, false);
+    EXPECT_EQ(d1.target_mode, HeatCoolAction::HEAT);
+    EXPECT_FLOAT_EQ(d1.target_temp, 19.5f);
+
+    // Above high -> COOL @ high
+    auto d2 = HeatPumpProtocol::decide_heat_cool(26.0f, 19.5f, 25.0f, nullptr, 0.5f, 1000, 0, false, 900000, false);
+    EXPECT_EQ(d2.target_mode, HeatCoolAction::COOL);
+    EXPECT_FLOAT_EQ(d2.target_temp, 25.0f);
+
+    // Inside deadband nearer low -> HEAT @ low; nearer high -> COOL @ high
+    auto d3 = HeatPumpProtocol::decide_heat_cool(21.0f, 19.5f, 25.0f, "OFF", 0.5f, 1000, 0, false, 900000, false);
+    EXPECT_EQ(d3.target_mode, HeatCoolAction::HEAT);
+    EXPECT_FLOAT_EQ(d3.target_temp, 19.5f);
+
+    auto d4 = HeatPumpProtocol::decide_heat_cool(23.5f, 19.5f, 25.0f, "DRY", 0.5f, 1000, 0, false, 900000, false);
+    EXPECT_EQ(d4.target_mode, HeatCoolAction::COOL);
+    EXPECT_FLOAT_EQ(d4.target_temp, 25.0f);
+}
+
+TEST(HeatCoolModeSwitchingTest, AutomaticSwitchingRespectsHysteresisDwellAndRollover) {
+    constexpr uint32_t kDwell = 900000;
+    // In HEAT: inside band or at high (below high + hyst) -> NONE
+    EXPECT_EQ(HeatPumpProtocol::decide_heat_cool(22.0f, 19.5f, 25.0f, "HEAT", 0.5f, 1000000, 0, true, kDwell, false).target_mode, HeatCoolAction::NONE);
+    EXPECT_EQ(HeatPumpProtocol::decide_heat_cool(25.0f, 19.5f, 25.0f, "HEAT", 0.5f, 1000000, 0, true, kDwell, false).target_mode, HeatCoolAction::NONE);
+
+    // In HEAT: at high + hyst before dwell -> NONE
+    EXPECT_EQ(HeatPumpProtocol::decide_heat_cool(25.5f, 19.5f, 25.0f, "HEAT", 0.5f, 500000, 100000, true, kDwell, false).target_mode, HeatCoolAction::NONE);
+
+    // In HEAT: at high + hyst after dwell -> COOL @ high (also verify uint32 rollover)
+    auto d_cool = HeatPumpProtocol::decide_heat_cool(25.5f, 19.5f, 25.0f, "HEAT", 0.5f, 400000U, 0xFFF00000U, true, kDwell, false);
+    EXPECT_EQ(d_cool.target_mode, HeatCoolAction::COOL);
+    EXPECT_FLOAT_EQ(d_cool.target_temp, 25.0f);
+
+    // In COOL: inside band or at low (above low - hyst) -> NONE
+    EXPECT_EQ(HeatPumpProtocol::decide_heat_cool(22.0f, 19.5f, 25.0f, "COOL", 0.5f, 2000000, 0, true, kDwell, false).target_mode, HeatCoolAction::NONE);
+    EXPECT_EQ(HeatPumpProtocol::decide_heat_cool(19.5f, 19.5f, 25.0f, "COOL", 0.5f, 2000000, 0, true, kDwell, false).target_mode, HeatCoolAction::NONE);
+
+    // In COOL: at low - hyst before dwell -> NONE; after dwell -> HEAT @ low
+    EXPECT_EQ(HeatPumpProtocol::decide_heat_cool(19.0f, 19.5f, 25.0f, "COOL", 0.5f, 500000, 100000, true, kDwell, false).target_mode, HeatCoolAction::NONE);
+    auto d_heat = HeatPumpProtocol::decide_heat_cool(19.0f, 19.5f, 25.0f, "COOL", 0.5f, 2000000, 100000, true, kDwell, false);
+    EXPECT_EQ(d_heat.target_mode, HeatCoolAction::HEAT);
+    EXPECT_FLOAT_EQ(d_heat.target_temp, 19.5f);
+}
+
+TEST(HeatCoolModeSwitchingTest, UserInitiatedBypassesDwellAndUpdatesActiveSetpoint) {
+    // User raises low above room while in COOL -> immediate flip to HEAT @ new low
+    auto d_flip_heat = HeatPumpProtocol::decide_heat_cool(21.0f, 22.0f, 26.0f, "COOL", 0.5f, 5000, 4000, true, 900000, true);
+    EXPECT_EQ(d_flip_heat.target_mode, HeatCoolAction::HEAT);
+    EXPECT_FLOAT_EQ(d_flip_heat.target_temp, 22.0f);
+
+    // User lowers high below room while in HEAT -> immediate flip to COOL @ new high
+    auto d_flip_cool = HeatPumpProtocol::decide_heat_cool(21.0f, 18.0f, 20.5f, "HEAT", 0.5f, 5000, 4000, true, 900000, true);
+    EXPECT_EQ(d_flip_cool.target_mode, HeatCoolAction::COOL);
+    EXPECT_FLOAT_EQ(d_flip_cool.target_temp, 20.5f);
+
+    // User adjusts high while cooling and room is below high -> keeps COOL @ new high
+    auto d_stay_cool = HeatPumpProtocol::decide_heat_cool(21.0f, 18.0f, 24.0f, "COOL", 0.5f, 5000, 4000, true, 900000, true);
+    EXPECT_EQ(d_stay_cool.target_mode, HeatCoolAction::COOL);
+    EXPECT_FLOAT_EQ(d_stay_cool.target_temp, 24.0f);
+}

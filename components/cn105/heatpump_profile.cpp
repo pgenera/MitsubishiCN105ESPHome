@@ -352,6 +352,7 @@ void HeatPumpProfile::apply_received_settings(heatpumpSettings& settings) {
 
     hp_.currentSettings.connected = true;
 
+    this->evaluate_heat_cool();
 }
 
 void HeatPumpProfile::reconcile_power_mode(heatpumpSettings& settings, bool updateCurrentSettings) {
@@ -553,9 +554,40 @@ void HeatPumpProfile::control_mode() {
         break;
 
     case climate::CLIMATE_MODE_HEAT_COOL:
-        ESP_LOGI("control", "changing mode to HEAT_COOL (hardware AUTO)");
-        hp_.setModeSetting("AUTO");
-        hp_.setPowerSetting("ON");
+        if (hp_.heat_cool_mode_switching_ && hp_.supports_dual_setpoint_) {
+            if (std::isnan(hp_.getTargetTemperatureLow()) && !std::isnan(this->heat_cool_low_)) {
+                hp_.setTargetTemperatureLow(this->heat_cool_low_);
+            }
+            if (std::isnan(hp_.getTargetTemperatureHigh()) && !std::isnan(this->heat_cool_high_)) {
+                hp_.setTargetTemperatureHigh(this->heat_cool_high_);
+            }
+            const bool currently_on = (hp_.currentSettings.power != nullptr &&
+                                       std::strcmp(hp_.currentSettings.power, "ON") == 0);
+            const char* active_hw = currently_on ? hp_.currentSettings.mode : nullptr;
+            const auto decision = HeatPumpProtocol::decide_heat_cool(
+                hp_.getCurrentTemperature(), hp_.getTargetTemperatureLow(), hp_.getTargetTemperatureHigh(),
+                active_hw, hp_.heat_cool_hysteresis_, CUSTOM_MILLIS,
+                this->last_heat_cool_switch_ms_, this->has_heat_cool_switched_,
+                hp_.heat_cool_min_switch_interval_ms_, /*user_initiated=*/true);
+            const char* target_hw = "HEAT";
+            if (decision.target_mode == HeatPumpProtocol::HeatCoolAction::COOL) {
+                target_hw = "COOL";
+            } else if (decision.target_mode == HeatPumpProtocol::HeatCoolAction::NONE &&
+                       active_hw != nullptr && std::strcmp(active_hw, "COOL") == 0) {
+                target_hw = "COOL";
+            }
+            ESP_LOGI("control", "changing mode to HEAT_COOL (hardware %s)", target_hw);
+            hp_.setModeSetting(target_hw);
+            hp_.setPowerSetting("ON");
+            if (hp_.currentSettings.mode == nullptr || std::strcmp(hp_.currentSettings.mode, target_hw) != 0) {
+                this->last_heat_cool_switch_ms_ = CUSTOM_MILLIS;
+                this->has_heat_cool_switched_ = true;
+            }
+        } else {
+            ESP_LOGI("control", "changing mode to HEAT_COOL (hardware AUTO)");
+            hp_.setModeSetting("AUTO");
+            hp_.setPowerSetting("ON");
+        }
         break;
 
     case climate::CLIMATE_MODE_AUTO:
@@ -644,10 +676,45 @@ void HeatPumpProfile::control_temperature() {
     // Utiliser la logique appropriée selon les traits
     switch (hp_.mode) {
     case climate::CLIMATE_MODE_HEAT_COOL:
-        // Mode HEAT_COOL (new): displays 2 sliders
-        // BUT sends AUTO command to Mitsubishi hardware
-        // with internal deadband logic
-        if (cn105_traits_requires_two_point(hp_.traits_)) {
+        if (hp_.heat_cool_mode_switching_ && cn105_traits_requires_two_point(hp_.traits_)) {
+            if ((!std::isnan(hp_.currentSettings.temperature)) && (hp_.currentSettings.temperature > 0)) {
+                if (std::isnan(hp_.getTargetTemperatureLow())) {
+                    hp_.setTargetTemperatureLow(hp_.currentSettings.temperature - 2.0f);
+                }
+                if (std::isnan(hp_.getTargetTemperatureHigh())) {
+                    hp_.setTargetTemperatureHigh(hp_.currentSettings.temperature + 2.0f);
+                }
+            }
+            const bool currently_on = (hp_.currentSettings.power != nullptr &&
+                                       std::strcmp(hp_.currentSettings.power, "ON") == 0);
+            const char* active_hw = (hp_.wantedSettings.mode != nullptr)
+                ? hp_.wantedSettings.mode
+                : (currently_on ? hp_.currentSettings.mode : nullptr);
+            const auto decision = HeatPumpProtocol::decide_heat_cool(
+                hp_.getCurrentTemperature(), hp_.getTargetTemperatureLow(), hp_.getTargetTemperatureHigh(),
+                active_hw, hp_.heat_cool_hysteresis_, CUSTOM_MILLIS,
+                this->last_heat_cool_switch_ms_, this->has_heat_cool_switched_,
+                hp_.heat_cool_min_switch_interval_ms_, /*user_initiated=*/true);
+            if (decision.target_mode == HeatPumpProtocol::HeatCoolAction::COOL) {
+                hp_.setModeSetting("COOL");
+                hp_.setPowerSetting("ON");
+                setting = decision.target_temp;
+            } else if (decision.target_mode == HeatPumpProtocol::HeatCoolAction::HEAT) {
+                hp_.setModeSetting("HEAT");
+                hp_.setPowerSetting("ON");
+                setting = decision.target_temp;
+            } else {
+                setting = hp_.getTargetTemperatureLow();
+            }
+            const char* chosen = (decision.target_mode == HeatPumpProtocol::HeatCoolAction::COOL) ? "COOL" : "HEAT";
+            if (hp_.currentSettings.mode == nullptr || std::strcmp(hp_.currentSettings.mode, chosen) != 0) {
+                this->last_heat_cool_switch_ms_ = CUSTOM_MILLIS;
+                this->has_heat_cool_switched_ = true;
+            }
+            ESP_LOGD("control", "HEAT_COOL mode-switch: room=%.1f, [%.1f - %.1f] => %s @ %.1f",
+                hp_.getCurrentTemperature(), hp_.getTargetTemperatureLow(), hp_.getTargetTemperatureHigh(),
+                chosen, setting);
+        } else if (cn105_traits_requires_two_point(hp_.traits_)) {
             if ((!std::isnan(hp_.currentSettings.temperature)) && (hp_.currentSettings.temperature > 0)) {
                 // Initialize if values are missing
                 if (std::isnan(hp_.getTargetTemperatureLow())) {
@@ -813,6 +880,16 @@ void HeatPumpProfile::update_action() {
             this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
             break;
         case climate::CLIMATE_MODE_HEAT_COOL:
+            if (hp_.heat_cool_mode_switching_ && hp_.currentSettings.mode != nullptr) {
+                if (std::strcmp(hp_.currentSettings.mode, "HEAT") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
+                    break;
+                }
+                if (std::strcmp(hp_.currentSettings.mode, "COOL") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
+                    break;
+                }
+            }
             if (this->setActionFromAutoDirection()) {
                 break;
             }
@@ -1004,12 +1081,18 @@ void HeatPumpProfile::apply_mode_setpoint() {
     if (!hp_.restore_setpoints_) {
         return;
     }
-    if (hp_.mode == climate::CLIMATE_MODE_HEAT_COOL && hp_.supports_dual_setpoint_ &&
-        !std::isnan(this->heat_cool_low_) && !std::isnan(this->heat_cool_high_)) {
-        ESP_LOGI("control", "Applying saved HEAT_COOL band [%.1f - %.1f] °C", this->heat_cool_low_, this->heat_cool_high_);
-        hp_.setTargetTemperatureLow(this->heat_cool_low_);
-        hp_.setTargetTemperatureHigh(this->heat_cool_high_);
-        this->control_temperature();
+    if (hp_.mode == climate::CLIMATE_MODE_HEAT_COOL && hp_.supports_dual_setpoint_) {
+        if (!std::isnan(this->heat_cool_low_) && !std::isnan(this->heat_cool_high_)) {
+            ESP_LOGI("control", "Applying saved HEAT_COOL band [%.1f - %.1f] °C", this->heat_cool_low_, this->heat_cool_high_);
+            hp_.setTargetTemperatureLow(this->heat_cool_low_);
+            hp_.setTargetTemperatureHigh(this->heat_cool_high_);
+            this->control_temperature();
+            return;
+        }
+        if (hp_.heat_cool_mode_switching_ &&
+            !std::isnan(hp_.getTargetTemperatureLow()) && !std::isnan(hp_.getTargetTemperatureHigh())) {
+            this->control_temperature();
+        }
         return;
     }
     const auto saved = this->mode_setpoints_.get(hp_.mode);
@@ -1019,6 +1102,37 @@ void HeatPumpProfile::apply_mode_setpoint() {
     ESP_LOGI("control", "Applying saved setpoint %.1f °C for mode %u", *saved, static_cast<unsigned>(hp_.mode));
     this->update_target_temperatures(*saved);
     this->control_temperature();
+}
+
+void HeatPumpProfile::evaluate_heat_cool() {
+    if (!hp_.heat_cool_mode_switching_ || !hp_.supports_dual_setpoint_ ||
+        hp_.mode != climate::CLIMATE_MODE_HEAT_COOL || !hp_.isHeatpumpConnected() ||
+        !hp_.currentSettings.connected || hp_.currentSettings.power == nullptr ||
+        std::strcmp(hp_.currentSettings.power, "ON") != 0) {
+        return;
+    }
+    if (hp_.wantedSettings.hasChanged || hp_.wantedSettings.hasBeenSent) {
+        return;
+    }
+    const float room = hp_.getCurrentTemperature();
+    const float low = hp_.getTargetTemperatureLow();
+    const float high = hp_.getTargetTemperatureHigh();
+    if (std::isnan(room) || std::isnan(low) || std::isnan(high)) {
+        return;
+    }
+    const auto decision = HeatPumpProtocol::decide_heat_cool(
+        room, low, high, hp_.currentSettings.mode, hp_.heat_cool_hysteresis_,
+        CUSTOM_MILLIS, this->last_heat_cool_switch_ms_, this->has_heat_cool_switched_,
+        hp_.heat_cool_min_switch_interval_ms_, /*user_initiated=*/false);
+    if (decision.target_mode == HeatPumpProtocol::HeatCoolAction::NONE) {
+        return;
+    }
+    const char* hw_mode = (decision.target_mode == HeatPumpProtocol::HeatCoolAction::HEAT) ? "HEAT" : "COOL";
+    ESP_LOGI("control", "HEAT_COOL auto-switch: room=%.1f °C, band=[%.1f - %.1f] °C (hyst=%.1f) -> %s @ %.1f °C",
+        room, low, high, hp_.heat_cool_hysteresis_, hw_mode, decision.target_temp);
+    this->last_heat_cool_switch_ms_ = CUSTOM_MILLIS;
+    this->has_heat_cool_switched_ = true;
+    hp_.applyHeatCoolAutoSwitch(hw_mode, decision.target_temp);
 }
 
 void HeatPumpProfile::publish_mode_setpoint_number_(climate::ClimateMode mode, float heatpump_temp) {

@@ -46,6 +46,7 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     bool accepts_remote_temperature(float setting) override;
     bool can_control_airflow() const override;
     void update_action() override;
+    void evaluate_heat_cool() override;
     void restore_setpoints() override;
     void save_setpoints() override;
     void sanitize_setpoints() override;
@@ -57,6 +58,8 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     bool wide_vane_adjust_ = false;
     uint32_t last_dual_setpoint_change_ms_ = 0;
     char last_dual_setpoint_side_ = 'N';
+    uint32_t last_heat_cool_switch_ms_ = 0;
+    bool has_heat_cool_switched_ = false;
     using SetpointState = HeatPumpProtocol::SetpointState;
     ESPPreferenceObject setpoint_pref_;
     bool setpoint_pref_ready_ = false;

@@ -115,6 +115,51 @@ struct HeatPumpProtocol {
         }
         return true;
     }
+    enum class HeatCoolAction : uint8_t { NONE = 0, HEAT = 1, COOL = 2 };
+    struct HeatCoolDecision {
+        HeatCoolAction target_mode = HeatCoolAction::NONE;
+        float target_temp = NAN;
+    };
+    static HeatCoolDecision decide_heat_cool(
+        float current_temp, float low, float high, const char* active_hw_mode,
+        float hysteresis_c, uint32_t now_ms, uint32_t last_switch_ms,
+        bool has_switched_before, uint32_t min_switch_interval_ms, bool user_initiated) {
+        if (std::isnan(low) || std::isnan(high)) {
+            return {HeatCoolAction::NONE, NAN};
+        }
+        const float eff_low = low;
+        const float eff_high = (high > low) ? high : low;
+        const bool is_hw_heat = (active_hw_mode != nullptr && std::strcmp(active_hw_mode, "HEAT") == 0);
+        const bool is_hw_cool = (active_hw_mode != nullptr && std::strcmp(active_hw_mode, "COOL") == 0);
+        const bool dwell_ok = !has_switched_before ||
+            (static_cast<uint32_t>(now_ms - last_switch_ms) >= min_switch_interval_ms);
+
+        if (!is_hw_heat && !is_hw_cool) {
+            if (std::isnan(current_temp)) return {HeatCoolAction::HEAT, eff_low};
+            if (current_temp <= eff_low) return {HeatCoolAction::HEAT, eff_low};
+            if (current_temp >= eff_high) return {HeatCoolAction::COOL, eff_high};
+            return ((current_temp - eff_low) <= (eff_high - current_temp))
+                ? HeatCoolDecision{HeatCoolAction::HEAT, eff_low}
+                : HeatCoolDecision{HeatCoolAction::COOL, eff_high};
+        }
+        if (is_hw_heat) {
+            const bool flip = !std::isnan(current_temp) && (
+                user_initiated
+                    ? (current_temp >= eff_high)
+                    : (current_temp >= eff_high + hysteresis_c && dwell_ok));
+            if (flip) return {HeatCoolAction::COOL, eff_high};
+            if (user_initiated) return {HeatCoolAction::HEAT, eff_low};
+            return {HeatCoolAction::NONE, NAN};
+        }
+        const bool flip = !std::isnan(current_temp) && (
+            user_initiated
+                ? (current_temp <= eff_low)
+                : (current_temp <= eff_low - hysteresis_c && dwell_ok));
+        if (flip) return {HeatCoolAction::HEAT, eff_low};
+        if (user_initiated) return {HeatCoolAction::COOL, eff_high};
+        return {HeatCoolAction::NONE, NAN};
+    }
+
     static float deadband_setting(float current, float low, float high) {
         if (current < low) return low;
         if (current > high) return high;

@@ -308,6 +308,9 @@ namespace esphome {
         // Opt-in (supports.restore_setpoints): persist per-mode setpoints (COOL/HEAT/AUTO)
         // and HEAT_COOL band across reboots
         void set_restore_setpoints(bool v) { this->restore_setpoints_ = v; }
+        void set_heat_cool_mode_switching(bool v) { this->heat_cool_mode_switching_ = v; }
+        void set_heat_cool_hysteresis(float c) { this->heat_cool_hysteresis_ = c; }
+        void set_heat_cool_min_switch_interval(uint32_t ms) { this->heat_cool_min_switch_interval_ms_ = ms; }
 
         // Configure the climate object with traits that we support.
 
@@ -446,6 +449,8 @@ namespace esphome {
 #endif
 
         void controlDelegate(const esphome::climate::ClimateCall& call);
+        void applyHeatCoolAutoSwitch(const char* hw_mode, float setpoint);
+        void applyHeatCoolAutoSwitchDelegate(const char* hw_mode, float setpoint);
         // Refactor helpers for controlDelegate
         bool processModeChange(const esphome::climate::ClimateCall& call);
         bool processTemperatureChange(const esphome::climate::ClimateCall& call);
@@ -542,6 +547,9 @@ namespace esphome {
         // so it is lost on reboot. When enabled, we persist {mode, low, high} to flash and
         // re-seed it in setup() before the first settings read.
         bool restore_setpoints_ = false;
+        bool heat_cool_mode_switching_ = false;
+        float heat_cool_hysteresis_ = 0.5f;
+        uint32_t heat_cool_min_switch_interval_ms_ = 900000;
         void restore_setpoint_state_();
         void save_setpoint_state_();
     };
