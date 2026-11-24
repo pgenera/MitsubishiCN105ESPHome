@@ -169,3 +169,39 @@ TEST(ModeSetpointsTest, DirectSetQuantizesAndRejectsInvalid) {
     EXPECT_FALSE(ms.set(CLIMATE_MODE_COOL, 32.0f).has_value());
     EXPECT_FALSE(ms.set(CLIMATE_MODE_AUTO, NAN).has_value());
 }
+
+TEST(SetpointPersistenceTest, QuantizeAndHeatCoolBandEdits) {
+    ASSERT_TRUE(HeatPumpProtocol::quantize_setpoint(20.3f).has_value());
+    EXPECT_FLOAT_EQ(*HeatPumpProtocol::quantize_setpoint(20.3f), 20.5f);
+    EXPECT_FALSE(HeatPumpProtocol::quantize_setpoint(9.5f).has_value());
+    EXPECT_FALSE(HeatPumpProtocol::quantize_setpoint(31.5f).has_value());
+    EXPECT_FALSE(HeatPumpProtocol::quantize_setpoint(NAN).has_value());
+
+    float low = NAN;
+    float high = NAN;
+    // Editing a single bound from NAN leaves the other NAN.
+    EXPECT_TRUE(HeatPumpProtocol::update_heat_cool_band(low, high, false, 19.6f));
+    EXPECT_FLOAT_EQ(low, 19.5f);
+    EXPECT_TRUE(std::isnan(high));
+
+    EXPECT_TRUE(HeatPumpProtocol::update_heat_cool_band(low, high, true, 23.8f));
+    EXPECT_FLOAT_EQ(low, 19.5f);
+    EXPECT_FLOAT_EQ(high, 24.0f);
+
+    // Pushing low above high clamps high up to match low.
+    EXPECT_TRUE(HeatPumpProtocol::update_heat_cool_band(low, high, false, 25.0f));
+    EXPECT_FLOAT_EQ(low, 25.0f);
+    EXPECT_FLOAT_EQ(high, 25.0f);
+
+    // Pushing high below low clamps low down to match high.
+    EXPECT_TRUE(HeatPumpProtocol::update_heat_cool_band(low, high, true, 21.0f));
+    EXPECT_FLOAT_EQ(low, 21.0f);
+    EXPECT_FLOAT_EQ(high, 21.0f);
+
+    // Out-of-range / NaN edits leave the band untouched.
+    EXPECT_FALSE(HeatPumpProtocol::update_heat_cool_band(low, high, false, 9.0f));
+    EXPECT_FALSE(HeatPumpProtocol::update_heat_cool_band(low, high, true, 32.0f));
+    EXPECT_FALSE(HeatPumpProtocol::update_heat_cool_band(low, high, true, NAN));
+    EXPECT_FLOAT_EQ(low, 21.0f);
+    EXPECT_FLOAT_EQ(high, 21.0f);
+}

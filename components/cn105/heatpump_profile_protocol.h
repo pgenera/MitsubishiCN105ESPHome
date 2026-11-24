@@ -98,6 +98,23 @@ struct HeatPumpProtocol {
             return out;
         }
     } __attribute__((packed));
+
+    static std::optional<float> quantize_setpoint(float temp) {
+        return ModeSetpoints::decode(ModeSetpoints::encode(temp));
+    }
+
+    static bool update_heat_cool_band(float& low, float& high, bool is_high, float temp) {
+        const auto quantized = quantize_setpoint(temp);
+        if (!quantized.has_value()) return false;
+        if (is_high) {
+            high = *quantized;
+            if (!std::isnan(low) && low > high) low = high;
+        } else {
+            low = *quantized;
+            if (!std::isnan(high) && high < low) high = low;
+        }
+        return true;
+    }
     static float deadband_setting(float current, float low, float high) {
         if (current < low) return low;
         if (current > high) return high;

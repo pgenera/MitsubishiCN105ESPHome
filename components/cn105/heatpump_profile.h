@@ -32,6 +32,7 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     void control_mode() override;
     void apply_mode_setpoint() override;
     void set_mode_setpoint(climate::ClimateMode mode, float ui_temperature) override;
+    void set_heat_cool_setpoint(bool is_high, float ui_temperature) override;
     void control_fan() override;
     void reconcile_fan(heatpumpSettings& settings, bool update_current) override;
     void update_target_temperatures(float temperature) override;
@@ -59,6 +60,9 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     using SetpointState = HeatPumpProtocol::SetpointState;
     ESPPreferenceObject setpoint_pref_;
     bool setpoint_pref_ready_ = false;
+    float heat_cool_low_ = NAN;
+    float heat_cool_high_ = NAN;
+    void publish_heat_cool_setpoint_numbers_();
     using ModeSetpoints = HeatPumpProtocol::ModeSetpoints;
     ESPPreferenceObject mode_setpoints_pref_;
     bool mode_setpoints_pref_ready_ = false;

@@ -222,6 +222,20 @@ void CN105Climate::set_auto_setpoint_number(ModeSetpointNumber* number) {
         });
 }
 
+void CN105Climate::set_heat_cool_low_setpoint_number(ModeSetpointNumber* number) {
+    this->heat_cool_low_setpoint_number_ = number;
+    this->heat_cool_low_setpoint_number_->setCallbackFunction([this](float x) {
+        this->profile_->set_heat_cool_setpoint(false, x);
+        });
+}
+
+void CN105Climate::set_heat_cool_high_setpoint_number(ModeSetpointNumber* number) {
+    this->heat_cool_high_setpoint_number_ = number;
+    this->heat_cool_high_setpoint_number_->setCallbackFunction([this](float x) {
+        this->profile_->set_heat_cool_setpoint(true, x);
+        });
+}
+
 void CN105Climate::set_air_purifier_switch(HVACOptionSwitch* Switch) {
     this->air_purifier_switch_ = Switch;
     this->air_purifier_switch_->setCallbackFunction([this](bool state) {

@@ -134,6 +134,8 @@ CONF_FUNCTIONS_SET_VALUE = "functions_set_value"
 CONF_HEAT_SETPOINT_NUMBER = "heat_setpoint_number"
 CONF_COOL_SETPOINT_NUMBER = "cool_setpoint_number"
 CONF_AUTO_SETPOINT_NUMBER = "auto_setpoint_number"
+CONF_HEAT_COOL_LOW_SETPOINT_NUMBER = "heat_cool_low_setpoint_number"
+CONF_HEAT_COOL_HIGH_SETPOINT_NUMBER = "heat_cool_high_setpoint_number"
 CONF_STAGE_SENSOR = "stage_sensor"
 CONF_SUB_MODE_SENSOR = "sub_mode_sensor"
 CONF_AUTO_SUB_MODE_SENSOR = "auto_sub_mode_sensor"
@@ -203,6 +205,8 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
     CONF_HEAT_SETPOINT_NUMBER,
     CONF_COOL_SETPOINT_NUMBER,
     CONF_AUTO_SETPOINT_NUMBER,
+    CONF_HEAT_COOL_LOW_SETPOINT_NUMBER,
+    CONF_HEAT_COOL_HIGH_SETPOINT_NUMBER,
     CONF_STAGE_SENSOR,
     CONF_SUB_MODE_SENSOR,
     CONF_AUTO_SUB_MODE_SENSOR,
@@ -557,6 +561,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_HEAT_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
             cv.Optional(CONF_COOL_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
             cv.Optional(CONF_AUTO_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
+            cv.Optional(CONF_HEAT_COOL_LOW_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
+            cv.Optional(CONF_HEAT_COOL_HIGH_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
             cv.Optional(CONF_FAHRENHEIT_SUPPORT_MODE, default="disabled"): cv.enum(
                 FAHRENHEIT_MODES, lower=True
             ),
@@ -628,7 +634,15 @@ CONFIG_SCHEMA = (
 )
 
 def validate_setpoint_numbers_config(config):
-    has_setpoint_numbers = any(
+    supports = config.get(CONF_SUPPORTS, {})
+    has_heat_cool_numbers = any(
+        key in config
+        for key in (
+            CONF_HEAT_COOL_LOW_SETPOINT_NUMBER,
+            CONF_HEAT_COOL_HIGH_SETPOINT_NUMBER,
+        )
+    )
+    has_setpoint_numbers = has_heat_cool_numbers or any(
         key in config
         for key in (
             CONF_HEAT_SETPOINT_NUMBER,
@@ -636,12 +650,16 @@ def validate_setpoint_numbers_config(config):
             CONF_AUTO_SETPOINT_NUMBER,
         )
     )
-    if has_setpoint_numbers and not config.get(CONF_SUPPORTS, {}).get(
-        CONF_RESTORE_SETPOINTS, False
-    ):
+    if has_setpoint_numbers and not supports.get(CONF_RESTORE_SETPOINTS, False):
         raise cv.Invalid(
-            "heat_setpoint_number, cool_setpoint_number, and auto_setpoint_number "
+            "heat_setpoint_number, cool_setpoint_number, auto_setpoint_number, "
+            "heat_cool_low_setpoint_number, and heat_cool_high_setpoint_number "
             "require supports.restore_setpoints: true"
+        )
+    if has_heat_cool_numbers and not supports.get(CONF_DUAL_SETPOINT, False):
+        raise cv.Invalid(
+            "heat_cool_low_setpoint_number and heat_cool_high_setpoint_number "
+            "require supports.dual_setpoint: true"
         )
     return config
 
@@ -894,6 +912,24 @@ def to_code(config):
             step=0.5,
         )
         cg.add(var.set_auto_setpoint_number(number_var))
+
+    if CONF_HEAT_COOL_LOW_SETPOINT_NUMBER in config:
+        number_var = yield number.new_number(
+            config[CONF_HEAT_COOL_LOW_SETPOINT_NUMBER],
+            min_value=10.0,
+            max_value=31.0,
+            step=0.5,
+        )
+        cg.add(var.set_heat_cool_low_setpoint_number(number_var))
+
+    if CONF_HEAT_COOL_HIGH_SETPOINT_NUMBER in config:
+        number_var = yield number.new_number(
+            config[CONF_HEAT_COOL_HIGH_SETPOINT_NUMBER],
+            min_value=10.0,
+            max_value=31.0,
+            step=0.5,
+        )
+        cg.add(var.set_heat_cool_high_setpoint_number(number_var))
 
     if CONF_AIR_PURIFIER_SWITCH in config:
         switch_var = yield switch.new_switch(config[CONF_AIR_PURIFIER_SWITCH])

@@ -1004,6 +1004,14 @@ void HeatPumpProfile::apply_mode_setpoint() {
     if (!hp_.restore_setpoints_) {
         return;
     }
+    if (hp_.mode == climate::CLIMATE_MODE_HEAT_COOL && hp_.supports_dual_setpoint_ &&
+        !std::isnan(this->heat_cool_low_) && !std::isnan(this->heat_cool_high_)) {
+        ESP_LOGI("control", "Applying saved HEAT_COOL band [%.1f - %.1f] °C", this->heat_cool_low_, this->heat_cool_high_);
+        hp_.setTargetTemperatureLow(this->heat_cool_low_);
+        hp_.setTargetTemperatureHigh(this->heat_cool_high_);
+        this->control_temperature();
+        return;
+    }
     const auto saved = this->mode_setpoints_.get(hp_.mode);
     if (!saved.has_value()) {
         return;
@@ -1037,6 +1045,47 @@ void HeatPumpProfile::publish_all_mode_setpoint_numbers_() {
     }
     if (const auto t = this->mode_setpoints_.get(climate::CLIMATE_MODE_AUTO)) {
         this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_AUTO, *t);
+    }
+}
+
+void HeatPumpProfile::publish_heat_cool_setpoint_numbers_() {
+    if (hp_.heat_cool_low_setpoint_number_ != nullptr && !std::isnan(this->heat_cool_low_)) {
+        hp_.heat_cool_low_setpoint_number_->publish_state(
+            hp_.fahrenheitSupport_.normalizeHeatpumpTemperatureToUiTemperature(this->heat_cool_low_));
+    }
+    if (hp_.heat_cool_high_setpoint_number_ != nullptr && !std::isnan(this->heat_cool_high_)) {
+        hp_.heat_cool_high_setpoint_number_->publish_state(
+            hp_.fahrenheitSupport_.normalizeHeatpumpTemperatureToUiTemperature(this->heat_cool_high_));
+    }
+}
+
+void HeatPumpProfile::set_heat_cool_setpoint(bool is_high, float ui_temperature) {
+    if (!hp_.restore_setpoints_ || !hp_.supports_dual_setpoint_) {
+        return;
+    }
+    const float hp_temp = hp_.fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(ui_temperature);
+    if (!HeatPumpProtocol::update_heat_cool_band(this->heat_cool_low_, this->heat_cool_high_, is_high, hp_temp)) {
+        ESP_LOGW("restore", "Ignoring out-of-range HEAT_COOL %s setpoint %.1f °C", is_high ? "high" : "low", hp_temp);
+        return;
+    }
+    if (this->setpoint_pref_ready_) {
+        const auto s = HeatPumpProtocol::saved_setpoint_state(hp_.mode, this->heat_cool_low_, this->heat_cool_high_);
+        this->setpoint_pref_.save(&s);
+    }
+    this->publish_heat_cool_setpoint_numbers_();
+    ESP_LOGI("restore", "Updated stored HEAT_COOL band to [%.1f - %.1f] °C", this->heat_cool_low_, this->heat_cool_high_);
+
+    if (hp_.mode == climate::CLIMATE_MODE_HEAT_COOL) {
+        auto call = hp_.make_call();
+        if (!std::isnan(this->heat_cool_low_)) {
+            call.set_target_temperature_low(
+                hp_.fahrenheitSupport_.normalizeHeatpumpTemperatureToUiTemperature(this->heat_cool_low_));
+        }
+        if (!std::isnan(this->heat_cool_high_)) {
+            call.set_target_temperature_high(
+                hp_.fahrenheitSupport_.normalizeHeatpumpTemperatureToUiTemperature(this->heat_cool_high_));
+        }
+        call.perform();
     }
 }
 
@@ -1121,6 +1170,15 @@ void HeatPumpProfile::restore_setpoints() {
 
     SetpointState s{};
     const bool loaded = this->setpoint_pref_.load(&s);
+    if (loaded && s.version == 1 && hp_.supports_dual_setpoint_) {
+        if (const auto q_low = HeatPumpProtocol::quantize_setpoint(s.target_low)) {
+            this->heat_cool_low_ = *q_low;
+        }
+        if (const auto q_high = HeatPumpProtocol::quantize_setpoint(s.target_high)) {
+            this->heat_cool_high_ = *q_high;
+        }
+        this->publish_heat_cool_setpoint_numbers_();
+    }
     const auto restored = HeatPumpProtocol::restored_setpoint_state(hp_.restore_setpoints_, loaded, s, hp_.supports_dual_setpoint_);
     if (!restored) {
         if (!loaded) ESP_LOGI("restore", "restore_setpoints: no saved HEAT_COOL band in flash");
@@ -1141,7 +1199,18 @@ void HeatPumpProfile::save_setpoints() {
     if (!hp_.restore_setpoints_ || !this->setpoint_pref_ready_) {
         return;
     }
-    const auto s = HeatPumpProtocol::saved_setpoint_state(hp_.mode, hp_.getTargetTemperatureLow(), hp_.getTargetTemperatureHigh());
+    if (hp_.supports_dual_setpoint_ && hp_.mode == climate::CLIMATE_MODE_HEAT_COOL) {
+        if (const auto q_low = HeatPumpProtocol::quantize_setpoint(hp_.getTargetTemperatureLow())) {
+            this->heat_cool_low_ = *q_low;
+        }
+        if (const auto q_high = HeatPumpProtocol::quantize_setpoint(hp_.getTargetTemperatureHigh())) {
+            this->heat_cool_high_ = *q_high;
+        }
+        this->publish_heat_cool_setpoint_numbers_();
+    }
+    const float low = !std::isnan(this->heat_cool_low_) ? this->heat_cool_low_ : hp_.getTargetTemperatureLow();
+    const float high = !std::isnan(this->heat_cool_high_) ? this->heat_cool_high_ : hp_.getTargetTemperatureHigh();
+    const auto s = HeatPumpProtocol::saved_setpoint_state(hp_.mode, low, high);
     if (this->setpoint_pref_.save(&s)) {
         ESP_LOGD("restore", "restore_setpoints: saved mode=%u low=%.1f high=%.1f", s.mode, s.target_low, s.target_high);
     }
