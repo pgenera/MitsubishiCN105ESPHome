@@ -61,6 +61,20 @@ struct HeatPumpProtocol {
             }
         }
 
+        std::optional<float> set(climate::ClimateMode mode, float temp) {
+            const uint8_t encoded = encode(temp);
+            if (encoded == kUnset) return std::nullopt;
+            uint8_t* slot = nullptr;
+            switch (mode) {
+                case climate::CLIMATE_MODE_COOL: slot = &cool_steps; break;
+                case climate::CLIMATE_MODE_HEAT: slot = &heat_steps; break;
+                case climate::CLIMATE_MODE_AUTO: slot = &auto_steps; break;
+                default: return std::nullopt;
+            }
+            *slot = encoded;
+            return decode(encoded);
+        }
+
         bool update_from_mode_str(const char* power, const char* mode, float temp) {
             if (power == nullptr || std::strcmp(power, "ON") != 0 || mode == nullptr) return false;
             const uint8_t encoded = encode(temp);

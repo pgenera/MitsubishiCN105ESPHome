@@ -150,3 +150,22 @@ TEST(ModeSetpointsTest, ValidatedRejectsBadVersionAndCorruptSlots) {
     auto r3 = ModeSetpoints::validated(false, corrupt);
     EXPECT_FALSE(r3.get(CLIMATE_MODE_HEAT).has_value());
 }
+
+TEST(ModeSetpointsTest, DirectSetQuantizesAndRejectsInvalid) {
+    ModeSetpoints ms{};
+    auto q_heat = ms.set(CLIMATE_MODE_HEAT, 19.6f);
+    ASSERT_TRUE(q_heat.has_value());
+    EXPECT_FLOAT_EQ(*q_heat, 19.5f);
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_HEAT), 19.5f);
+
+    auto q_cool = ms.set(CLIMATE_MODE_COOL, 24.3f);
+    ASSERT_TRUE(q_cool.has_value());
+    EXPECT_FLOAT_EQ(*q_cool, 24.5f);
+    EXPECT_FLOAT_EQ(*ms.get(CLIMATE_MODE_COOL), 24.5f);
+
+    EXPECT_FALSE(ms.set(CLIMATE_MODE_DRY, 22.0f).has_value());
+    EXPECT_FALSE(ms.set(CLIMATE_MODE_OFF, 22.0f).has_value());
+    EXPECT_FALSE(ms.set(CLIMATE_MODE_HEAT, 9.0f).has_value());
+    EXPECT_FALSE(ms.set(CLIMATE_MODE_COOL, 32.0f).has_value());
+    EXPECT_FALSE(ms.set(CLIMATE_MODE_AUTO, NAN).has_value());
+}

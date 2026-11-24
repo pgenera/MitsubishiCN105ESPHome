@@ -131,6 +131,9 @@ CONF_FUNCTIONS_BUTTON = "functions_get_button"
 CONF_FUNCTIONS_SET_BUTTON = "functions_set_button"
 CONF_FUNCTIONS_SET_CODE = "functions_set_code"
 CONF_FUNCTIONS_SET_VALUE = "functions_set_value"
+CONF_HEAT_SETPOINT_NUMBER = "heat_setpoint_number"
+CONF_COOL_SETPOINT_NUMBER = "cool_setpoint_number"
+CONF_AUTO_SETPOINT_NUMBER = "auto_setpoint_number"
 CONF_STAGE_SENSOR = "stage_sensor"
 CONF_SUB_MODE_SENSOR = "sub_mode_sensor"
 CONF_AUTO_SUB_MODE_SENSOR = "auto_sub_mode_sensor"
@@ -197,6 +200,9 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
     CONF_FUNCTIONS_SET_BUTTON,
     CONF_FUNCTIONS_SET_CODE,
     CONF_FUNCTIONS_SET_VALUE,
+    CONF_HEAT_SETPOINT_NUMBER,
+    CONF_COOL_SETPOINT_NUMBER,
+    CONF_AUTO_SETPOINT_NUMBER,
     CONF_STAGE_SENSOR,
     CONF_SUB_MODE_SENSOR,
     CONF_AUTO_SUB_MODE_SENSOR,
@@ -234,6 +240,9 @@ FunctionsSensor = cg.global_ns.class_(
 )
 FunctionsButton = cg.global_ns.class_("FunctionsButton", button.Button, cg.Component)
 FunctionsNumber = cg.global_ns.class_("FunctionsNumber", number.Number, cg.Component)
+ModeSetpointNumber = cg.global_ns.class_(
+    "ModeSetpointNumber", number.Number, cg.Component
+)
 SubModSensor = cg.global_ns.class_("SubModSensor", text_sensor.TextSensor, cg.Component)
 AutoSubModSensor = cg.global_ns.class_(
     "AutoSubModSensor", text_sensor.TextSensor, cg.Component
@@ -366,6 +375,14 @@ FUNCTIONS_NUMBER_SCHEMA = number.number_schema(
     FunctionsNumber, entity_category=ENTITY_CATEGORY_CONFIG
 ).extend(
     {cv.GenerateID(CONF_ID): cv.declare_id(FunctionsNumber)}
+)
+MODE_SETPOINT_NUMBER_SCHEMA = number.number_schema(
+    ModeSetpointNumber,
+    device_class=DEVICE_CLASS_TEMPERATURE,
+    unit_of_measurement=UNIT_CELSIUS,
+    entity_category=ENTITY_CATEGORY_CONFIG,
+).extend(
+    {cv.GenerateID(CONF_ID): cv.declare_id(ModeSetpointNumber)}
 )
 SUB_MODE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(SubModSensor).extend(
     {cv.GenerateID(CONF_ID): cv.declare_id(SubModSensor)}
@@ -537,6 +554,9 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_FUNCTIONS_SET_BUTTON): FUNCTIONS_BUTTON_SCHEMA,
             cv.Optional(CONF_FUNCTIONS_SET_CODE): FUNCTIONS_NUMBER_SCHEMA,
             cv.Optional(CONF_FUNCTIONS_SET_VALUE): FUNCTIONS_NUMBER_SCHEMA,
+            cv.Optional(CONF_HEAT_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
+            cv.Optional(CONF_COOL_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
+            cv.Optional(CONF_AUTO_SETPOINT_NUMBER): MODE_SETPOINT_NUMBER_SCHEMA,
             cv.Optional(CONF_FAHRENHEIT_SUPPORT_MODE, default="disabled"): cv.enum(
                 FAHRENHEIT_MODES, lower=True
             ),
@@ -826,6 +846,33 @@ def to_code(config):
             conf_item, min_value=1.0, max_value=3.0, step=1.0
         )
         cg.add(var.set_functions_set_value(number_var))
+
+    if CONF_HEAT_SETPOINT_NUMBER in config:
+        number_var = yield number.new_number(
+            config[CONF_HEAT_SETPOINT_NUMBER],
+            min_value=10.0,
+            max_value=31.0,
+            step=0.5,
+        )
+        cg.add(var.set_heat_setpoint_number(number_var))
+
+    if CONF_COOL_SETPOINT_NUMBER in config:
+        number_var = yield number.new_number(
+            config[CONF_COOL_SETPOINT_NUMBER],
+            min_value=10.0,
+            max_value=31.0,
+            step=0.5,
+        )
+        cg.add(var.set_cool_setpoint_number(number_var))
+
+    if CONF_AUTO_SETPOINT_NUMBER in config:
+        number_var = yield number.new_number(
+            config[CONF_AUTO_SETPOINT_NUMBER],
+            min_value=10.0,
+            max_value=31.0,
+            step=0.5,
+        )
+        cg.add(var.set_auto_setpoint_number(number_var))
 
     if CONF_AIR_PURIFIER_SWITCH in config:
         switch_var = yield switch.new_switch(config[CONF_AIR_PURIFIER_SWITCH])

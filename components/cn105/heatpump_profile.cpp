@@ -1010,6 +1010,66 @@ void HeatPumpProfile::apply_mode_setpoint() {
     this->control_temperature();
 }
 
+void HeatPumpProfile::publish_mode_setpoint_number_(climate::ClimateMode mode, float heatpump_temp) {
+    ModeSetpointNumber* target = nullptr;
+    switch (mode) {
+        case climate::CLIMATE_MODE_HEAT: target = hp_.heat_setpoint_number_; break;
+        case climate::CLIMATE_MODE_COOL: target = hp_.cool_setpoint_number_; break;
+        case climate::CLIMATE_MODE_AUTO: target = hp_.auto_setpoint_number_; break;
+        default: return;
+    }
+    if (target == nullptr) {
+        return;
+    }
+    const float ui_temp = hp_.fahrenheitSupport_.normalizeHeatpumpTemperatureToUiTemperature(heatpump_temp);
+    target->publish_state(ui_temp);
+}
+
+void HeatPumpProfile::publish_all_mode_setpoint_numbers_() {
+    if (const auto t = this->mode_setpoints_.get(climate::CLIMATE_MODE_HEAT)) {
+        this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_HEAT, *t);
+    }
+    if (const auto t = this->mode_setpoints_.get(climate::CLIMATE_MODE_COOL)) {
+        this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_COOL, *t);
+    }
+    if (const auto t = this->mode_setpoints_.get(climate::CLIMATE_MODE_AUTO)) {
+        this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_AUTO, *t);
+    }
+}
+
+void HeatPumpProfile::set_mode_setpoint(climate::ClimateMode mode, float ui_temperature) {
+    const float hp_temp = hp_.fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(ui_temperature);
+    const auto quantized = this->mode_setpoints_.set(mode, hp_temp);
+    if (!quantized.has_value()) {
+        ESP_LOGW("restore", "Ignoring out-of-range setpoint %.1f °C for mode %u", hp_temp, static_cast<unsigned>(mode));
+        return;
+    }
+    if (this->mode_setpoints_pref_ready_) {
+        this->mode_setpoints_pref_.save(&this->mode_setpoints_);
+    }
+    this->publish_mode_setpoint_number_(mode, *quantized);
+    ESP_LOGI("restore", "Updated stored setpoint for mode %u to %.1f °C", static_cast<unsigned>(mode), *quantized);
+
+    // If the unit is currently running in this mode, also apply the new setpoint immediately
+    // so the heat pump stays in sync and subsequent polls don't overwrite the user's edit.
+    if (hp_.mode == mode) {
+        const float ui_quantized = hp_.fahrenheitSupport_.normalizeHeatpumpTemperatureToUiTemperature(*quantized);
+        auto call = hp_.make_call();
+        if (cn105_traits_requires_two_point(hp_.traits_)) {
+            if (mode == climate::CLIMATE_MODE_HEAT) {
+                call.set_target_temperature_low(ui_quantized);
+            } else if (mode == climate::CLIMATE_MODE_COOL) {
+                call.set_target_temperature_high(ui_quantized);
+            } else {
+                call.set_target_temperature(ui_quantized);
+            }
+        } else {
+            call.set_target_temperature(ui_quantized);
+        }
+        call.perform();
+    }
+}
+
 void HeatPumpProfile::save_mode_setpoint_(const heatpumpSettings& settings) {
     if (!this->mode_setpoints_pref_ready_) {
         return;
@@ -1020,6 +1080,13 @@ void HeatPumpProfile::save_mode_setpoint_(const heatpumpSettings& settings) {
     if (this->mode_setpoints_.update_from_mode_str(settings.power, settings.mode, settings.temperature)) {
         if (this->mode_setpoints_pref_.save(&this->mode_setpoints_)) {
             ESP_LOGI("restore", "Saved %s setpoint: %.1f °C", settings.mode, settings.temperature);
+        }
+        if (std::strcmp(settings.mode, "HEAT") == 0) {
+            this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_HEAT, settings.temperature);
+        } else if (std::strcmp(settings.mode, "COOL") == 0) {
+            this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_COOL, settings.temperature);
+        } else if (std::strcmp(settings.mode, "AUTO") == 0) {
+            this->publish_mode_setpoint_number_(climate::CLIMATE_MODE_AUTO, settings.temperature);
         }
     }
 }
@@ -1032,6 +1099,7 @@ void HeatPumpProfile::restore_setpoints() {
     ModeSetpoints raw_modes{};
     const bool loaded_modes = this->mode_setpoints_pref_.load(&raw_modes);
     this->mode_setpoints_ = ModeSetpoints::validated(loaded_modes, raw_modes);
+    this->publish_all_mode_setpoint_numbers_();
     ESP_LOGI("restore", "Saved per-mode setpoints (°C): heat=%.1f cool=%.1f auto=%.1f",
         this->mode_setpoints_.get(climate::CLIMATE_MODE_HEAT).value_or(-1.0f),
         this->mode_setpoints_.get(climate::CLIMATE_MODE_COOL).value_or(-1.0f),

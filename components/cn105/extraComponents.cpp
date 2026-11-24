@@ -201,6 +201,27 @@ void CN105Climate::set_functions_set_value(FunctionsNumber* Number) {
         });
 }
 
+void CN105Climate::set_heat_setpoint_number(ModeSetpointNumber* number) {
+    this->heat_setpoint_number_ = number;
+    this->heat_setpoint_number_->setCallbackFunction([this](float x) {
+        this->profile_->set_mode_setpoint(climate::CLIMATE_MODE_HEAT, x);
+        });
+}
+
+void CN105Climate::set_cool_setpoint_number(ModeSetpointNumber* number) {
+    this->cool_setpoint_number_ = number;
+    this->cool_setpoint_number_->setCallbackFunction([this](float x) {
+        this->profile_->set_mode_setpoint(climate::CLIMATE_MODE_COOL, x);
+        });
+}
+
+void CN105Climate::set_auto_setpoint_number(ModeSetpointNumber* number) {
+    this->auto_setpoint_number_ = number;
+    this->auto_setpoint_number_->setCallbackFunction([this](float x) {
+        this->profile_->set_mode_setpoint(climate::CLIMATE_MODE_AUTO, x);
+        });
+}
+
 void CN105Climate::set_air_purifier_switch(HVACOptionSwitch* Switch) {
     this->air_purifier_switch_ = Switch;
     this->air_purifier_switch_->setCallbackFunction([this](bool state) {

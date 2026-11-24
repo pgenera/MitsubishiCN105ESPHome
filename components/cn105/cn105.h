@@ -19,6 +19,7 @@
 #include "stage_sensor.h"
 #include "functions_sensor.h"
 #include "functions_number.h"
+#include "mode_setpoint_number.h"
 #include "functions_button.h"
 #include "sub_mode_sensor.h"
 #include "error_code_sensor.h"
@@ -110,6 +111,9 @@ namespace esphome {
         void set_functions_set_button(FunctionsButton* Button);
         void set_functions_set_code(FunctionsNumber* Number);
         void set_functions_set_value(FunctionsNumber* Number);
+        void set_heat_setpoint_number(ModeSetpointNumber* number);
+        void set_cool_setpoint_number(ModeSetpointNumber* number);
+        void set_auto_setpoint_number(ModeSetpointNumber* number);
 
         void set_sub_mode_sensor(esphome::text_sensor::TextSensor* Sub_mode_sensor);
         void set_auto_sub_mode_sensor(esphome::text_sensor::TextSensor* Auto_sub_mode_sensor);
@@ -133,6 +137,9 @@ namespace esphome {
         FunctionsButton* Functions_set_button_ = nullptr;
         FunctionsNumber* Functions_set_code_ = nullptr;
         FunctionsNumber* Functions_set_value_ = nullptr;
+        ModeSetpointNumber* heat_setpoint_number_ = nullptr;
+        ModeSetpointNumber* cool_setpoint_number_ = nullptr;
+        ModeSetpointNumber* auto_setpoint_number_ = nullptr;
         text_sensor::TextSensor* Sub_mode_sensor_ = nullptr;
         text_sensor::TextSensor* Auto_sub_mode_sensor_ = nullptr;
         text_sensor::TextSensor* error_code_sensor_{ nullptr };
