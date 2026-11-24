@@ -627,7 +627,28 @@ CONFIG_SCHEMA = (
     .extend(cv.COMPONENT_SCHEMA)
 )
 
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, validate_lossnay_config)
+def validate_setpoint_numbers_config(config):
+    has_setpoint_numbers = any(
+        key in config
+        for key in (
+            CONF_HEAT_SETPOINT_NUMBER,
+            CONF_COOL_SETPOINT_NUMBER,
+            CONF_AUTO_SETPOINT_NUMBER,
+        )
+    )
+    if has_setpoint_numbers and not config.get(CONF_SUPPORTS, {}).get(
+        CONF_RESTORE_SETPOINTS, False
+    ):
+        raise cv.Invalid(
+            "heat_setpoint_number, cool_setpoint_number, and auto_setpoint_number "
+            "require supports.restore_setpoints: true"
+        )
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    CONFIG_SCHEMA, validate_lossnay_config, validate_setpoint_numbers_config
+)
 
 
 @coroutine
@@ -702,8 +723,8 @@ def to_code(config):
 
         # Note: If yaml_dual is False, we simply do NOT set the dual-setpoint trait.
 
-        # Opt-in: persist the HEAT_COOL band (mode + low/high) to flash and restore
-        # it on boot, so a reboot/OTA doesn't drop the unit back to hardware AUTO.
+        # Opt-in: persist per-mode setpoints (COOL/HEAT/AUTO) and the HEAT_COOL
+        # band (mode + low/high) to flash and restore them on boot/mode change.
         cg.add(var.set_restore_setpoints(supports.get(CONF_RESTORE_SETPOINTS, False)))
         # ESPHome's default behavior for modes like COOL/HEAT is to enable single-point target temperature.
         # We don't need to explicitly force single-point or clear the dual flag (it's off by default).

@@ -301,7 +301,8 @@ namespace esphome {
         // Unité de puissance brute envoyée par la PAC: false = Watts (défaut), true = BTU/s
         void set_power_unit_is_btu(bool v) { this->power_unit_is_btu_ = v; }
 
-        // Opt-in (supports.restore_setpoints): persist HEAT_COOL band across reboots
+        // Opt-in (supports.restore_setpoints): persist per-mode setpoints (COOL/HEAT/AUTO)
+        // and HEAT_COOL band across reboots
         void set_restore_setpoints(bool v) { this->restore_setpoints_ = v; }
 
         // Configure the climate object with traits that we support.

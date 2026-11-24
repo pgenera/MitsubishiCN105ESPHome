@@ -1001,6 +1001,9 @@ void HeatPumpProfile::handleSingleTargetInAutoOrDry(float requested) {
 }
 
 void HeatPumpProfile::apply_mode_setpoint() {
+    if (!hp_.restore_setpoints_) {
+        return;
+    }
     const auto saved = this->mode_setpoints_.get(hp_.mode);
     if (!saved.has_value()) {
         return;
@@ -1038,6 +1041,9 @@ void HeatPumpProfile::publish_all_mode_setpoint_numbers_() {
 }
 
 void HeatPumpProfile::set_mode_setpoint(climate::ClimateMode mode, float ui_temperature) {
+    if (!hp_.restore_setpoints_) {
+        return;
+    }
     const float hp_temp = hp_.fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(ui_temperature);
     const auto quantized = this->mode_setpoints_.set(mode, hp_temp);
     if (!quantized.has_value()) {
@@ -1071,7 +1077,7 @@ void HeatPumpProfile::set_mode_setpoint(climate::ClimateMode mode, float ui_temp
 }
 
 void HeatPumpProfile::save_mode_setpoint_(const heatpumpSettings& settings) {
-    if (!this->mode_setpoints_pref_ready_) {
+    if (!hp_.restore_setpoints_ || !this->mode_setpoints_pref_ready_) {
         return;
     }
     if (hp_.mode == climate::CLIMATE_MODE_HEAT_COOL) {
@@ -1092,7 +1098,10 @@ void HeatPumpProfile::save_mode_setpoint_(const heatpumpSettings& settings) {
 }
 
 void HeatPumpProfile::restore_setpoints() {
-    // Always restore per-mode setpoints (COOL / HEAT / AUTO) from flash/RTC.
+    if (!hp_.restore_setpoints_) {
+        return;
+    }
+    // Restore per-mode setpoints (COOL / HEAT / AUTO) from flash/RTC.
     this->mode_setpoints_pref_ = global_preferences->make_preference<ModeSetpoints>(
         hp_.get_object_id_hash() ^ 0x4D535054UL);  // XOR 'MSPT'
     this->mode_setpoints_pref_ready_ = true;
@@ -1105,9 +1114,7 @@ void HeatPumpProfile::restore_setpoints() {
         this->mode_setpoints_.get(climate::CLIMATE_MODE_COOL).value_or(-1.0f),
         this->mode_setpoints_.get(climate::CLIMATE_MODE_AUTO).value_or(-1.0f));
 
-    if (!hp_.restore_setpoints_) {
-        return;
-    }
+    // Restore HEAT_COOL band (only applies when dual_setpoint is enabled).
     this->setpoint_pref_ = global_preferences->make_preference<SetpointState>(
         hp_.get_object_id_hash() ^ 0x53504E54UL);  // XOR 'SPNT'
     this->setpoint_pref_ready_ = true;
